@@ -8,6 +8,7 @@ modules =
 --     Compiler.Scheme.Chicken,
     Compiler.Scheme.Racket,
     Compiler.Scheme.Common,
+	Compiler.JS.Javascript,
 
     Control.Delayed,
 
