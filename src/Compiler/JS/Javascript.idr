@@ -18,7 +18,7 @@ import public Compiler.Common
 
 %default total
 
-compile : Ref Ctxt Defs -> ClosedTerm -> Either String String
+compile : Ref Ctxt Defs -> ClosedTerm -> Either String Doc
 compile ctx tm = ?rhs
 
 compileExpr :
@@ -28,8 +28,8 @@ compileExpr :
 compileExpr ctx execDir tm outfile =
   case compile ctx tm of
     Left err => throw (InternalError err)  -- TODO
-    Right src => do
-      coreLift $ writeFile outfile src
+    Right doc => do
+      coreLift $ writeFile outfile (render "  " doc)
       pure (Just src)
 
 executeExpr :
