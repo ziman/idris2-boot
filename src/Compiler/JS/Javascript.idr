@@ -10,7 +10,9 @@ import Core.Directory
 import Core.Name
 import Core.Options
 import Core.TT
+
 import Utils.Hex
+import Text.Pretty
 
 import public Compiler.Common
 

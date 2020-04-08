@@ -8,7 +8,7 @@ modules =
 --     Compiler.Scheme.Chicken,
     Compiler.Scheme.Racket,
     Compiler.Scheme.Common,
-	Compiler.JS.Javascript,
+    Compiler.JS.Javascript,
 
     Control.Delayed,
 
@@ -83,6 +83,7 @@ modules =
     Text.Parser.Core,
     Text.Quantity,
     Text.Token,
+    Text.Pretty,
 
     TTImp.BindImplicits,
     TTImp.Elab,
