@@ -19,15 +19,15 @@ import Compiler.CompileExpr
 
 import public Compiler.Common
 
-%default total
+%default covering
 
 compile : Ref Ctxt Defs -> ClosedTerm -> Either String Doc
 compile ctx tm = ?rhs
 
-docDefs :: List CDef -> Doc
+docDefs : List CDef -> Doc
 docDefs = ?rhs_docDefs
 
-docMain :: CExpr [] -> Doc
+docMain : CExp [] -> Doc
 docMain = ?rhs_docMain
 
 -- Convert the name to scheme code
@@ -35,7 +35,7 @@ docMain = ?rhs_docMain
 export
 getCDef : {auto c : Ref Ctxt Defs} -> Defs -> Name -> Core CDef
 getCDef defs n =
-  lookupCtxtExact n (gamma defs) >>= \case
+  lookupCtxtExact n (gamma defs) >>= \x => case x of
     Nothing => throw $ InternalError ("Compiling undefined name " ++ show n)
     Just d => case compexpr d of
       Nothing => throw $ InternalError ("No compiled definition for " ++ show n)
@@ -47,28 +47,21 @@ compileExpr :
     -> Core (Maybe String)
 compileExpr ctx execDir tmMain outfile = do
   defs <- get Ctxt
-  (ns, tags) <- findUsedNames tm
-  cdefs <- traverse (getDef defs) ns
-  cmain <- compileExp tags tmMain
+  (ns, tags) <- findUsedNames tmMain
+  cdefs <- traverse (getCDef defs) ns
+  cMain <- compileExp tags tmMain
   rts <- readDataFile "javascript/support.js"
 
   let srcDoc =
         text rts
         $$ docDefs cdefs
-        $$ docMain cmain
+        $$ docMain cMain
 
   Right () <- coreLift $ writeFile outfile (render "  " srcDoc)
      | Left err => throw (FileErr outfile err)
   coreLift $ chmod outfile 0o755
-  pure ()
 
-compileExpr : Ref Ctxt Defs -> (execDir : String) ->
-              ClosedTerm -> (outfile : String) -> Core (Maybe String)
-  case compile ctx tm of
-    Left err => throw (InternalError err)  -- TODO
-    Right doc => do
-      coreLift $ writeFile outfile (render "  " doc)
-      pure (Just outfile)
+  pure (Just outfile)
 
 executeExpr :
     Ref Ctxt Defs -> (execDir : String)
