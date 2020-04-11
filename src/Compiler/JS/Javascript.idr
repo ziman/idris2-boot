@@ -14,6 +14,7 @@ import Core.TT
 import Utils.Hex
 import Text.Pretty
 
+import Compiler.JS.DLang
 import public Compiler.Common
 
 %default total
@@ -30,7 +31,7 @@ compileExpr ctx execDir tm outfile =
     Left err => throw (InternalError err)  -- TODO
     Right doc => do
       coreLift $ writeFile outfile (render "  " doc)
-      pure (Just src)
+      pure (Just outfile)
 
 executeExpr :
     Ref Ctxt Defs -> (execDir : String)
@@ -44,4 +45,3 @@ executeExpr ctx execDir tm = do
 export
 codegenJavascript : Codegen
 codegenJavascript = MkCG compileExpr executeExpr
-
