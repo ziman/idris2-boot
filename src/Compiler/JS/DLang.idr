@@ -7,8 +7,6 @@ import public Core.Context
 import public Core.Name
 import public Core.TT
 
-import Control.Monad.RWS
-
 %default total
 
 public export
@@ -57,16 +55,51 @@ record DDef where
 record DCState where
   constructor MkDCState
 
-record Ctx where
-  constructor MkCtx
+record Env where
+  constructor MkEnv
 
-DC : Type -> Type
-DC = RWS Ctx (List DDef) DCState
+public export
+data Failure = Debug String
+
+record DC (a : Type) where
+  constructor MkDC
+  runDC : Env -> DCState -> Either Failure (DCState, List DDef, a)
+
+Functor DC where
+  map f (MkDC g) = MkDC $ \env, st => case g env st of
+    Left fail => Left fail
+    Right (st', cs, x) => Right (st', cs, f x)
+
+Applicative DC where
+  pure x = MkDC $ \env, st => Right (st, neutral, x)
+  (<*>) (MkDC f) (MkDC g) = MkDC $ \env, st =>
+    case f env st of
+        Left fail => Left fail
+        Right (st', cs', f') => case g env st' of
+            Left fail => Left fail
+            Right (st'', cs'', x'') => Right (st'', cs' <+> cs'', f' x'')
+
+Monad DC where
+  (>>=) (MkDC f) g = MkDC $ \env, st =>
+    case f env st of
+        Left fail => Left fail
+        Right (st', cs, x) => case g x of
+            MkDC h => case h env st' of
+                Left fail => Left fail
+                Right (st'', cs'', x'') => Right (st'', cs <+> cs'', x'')
+
+getEnv : DC Env
+getEnv = MkDC $ \env, st => Right (st, neutral, env)
+
+throw : Failure -> DC a
+throw err = MkDC $ \env, st => Left err
 
 dcTm : Term vars -> DC (DTerm vars)
 dcTm tm = ?rhs
 
--- runRWST : r -> s -> m (a, s, w)
 export
-defunctionalise : ClosedTerm -> (List DDef, DTerm [])
-defunctionalise = ?rhs_defun
+defunctionalise : ClosedTerm -> Either Failure (List DDef, DTerm [])
+defunctionalise tm =
+  case runDC (dcTm tm) MkEnv MkDCState of
+    Right (_, ddefs, dtm) => Right (ddefs, dtm)
+    Left err => Left err
