@@ -7,9 +7,11 @@ import public Core.Context
 import public Core.Name
 import public Core.TT
 
-%default total
-%access public export
+import Control.Monad.RWS
 
+%default total
+
+public export
 data DTerm : List Name -> Type where
   DLocal :
     {name : _}
@@ -26,6 +28,7 @@ data DTerm : List Name -> Type where
   DErased : DTerm vars
 
 mutual
+  public export
   data DCaseTree : List Name -> Type where
        DCase : {name : _} ->
               (idx : Nat) ->
@@ -36,6 +39,7 @@ mutual
        DUnmatched : (msg : String) -> DCaseTree vars
        DImpossible : DCaseTree vars
 
+  public export
   data DCaseAlt : List Name -> Type where
        DConCase : Name -> (tag : Int) -> (args : List Name) ->
                  DCaseTree (args ++ vars) -> DCaseAlt vars
@@ -44,7 +48,25 @@ mutual
        DConstCase : Constant -> DCaseTree vars -> DCaseAlt vars
        DefaultCase : DCaseTree vars -> DCaseAlt vars
 
+public export
 record DDef where
   constructor MkDDef
   args : List Name
   body : DCaseTree args
+
+record DCState where
+  constructor MkDCState
+
+record Ctx where
+  constructor MkCtx
+
+DC : Type -> Type
+DC = RWS Ctx (List DDef) DCState
+
+dcTm : Term vars -> DC (DTerm vars)
+dcTm tm = ?rhs
+
+-- runRWST : r -> s -> m (a, s, w)
+export
+defunctionalise : ClosedTerm -> (List DDef, DTerm [])
+defunctionalise = ?rhs_defun
