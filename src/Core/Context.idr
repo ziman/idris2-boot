@@ -47,6 +47,32 @@ defaultFlags : TypeFlags
 defaultFlags = MkTypeFlags False False
 
 public export
+data DConOpt
+  -- if only constructor, and only one argument is non-Rig0,
+  -- use this optimisation. The Nat is the unerased argument position.
+  -- The Bool is 'True' if there is no %World token in the
+  -- structure, which means it is safe to completely erase
+  -- when pattern matching (otherwise we still have to ensure
+  -- that the value is inspected, to make sure external effects
+  -- happen)
+  = NewType Bool Nat
+
+  -- if the family is an enum after erasure
+  | TagOnly
+
+  -- if the family has a Nat-like shape after erasure
+  -- the Nat is the recursive argument
+  | NatLikeS Nat
+  | NatLikeZ
+
+export
+Show DConOpt where
+  show (NewType noWorld fieldNr) = "NewType " ++ show noWorld ++ " " ++ show fieldNr
+  show TagOnly = "TagOnly"
+  show (NatLikeS fieldNr) = "NatLikeS " ++ show fieldNr
+  show NatLikeZ = "NatLikeZ"
+
+public export
 data Def : Type where
     None : Def -- Not yet defined
     PMDef : (pminfo : PMDefInfo) ->
@@ -67,14 +93,7 @@ data Def : Type where
                  Def
     Builtin : {arity : Nat} -> PrimFn arity -> Def
     DCon : (tag : Int) -> (arity : Nat) ->
-           (newtypeArg : Maybe (Bool, Nat)) ->
-               -- if only constructor, and only one argument is non-Rig0,
-               -- flag it here. The Nat is the unerased argument position.
-               -- The Bool is 'True' if there is no %World token in the
-               -- structure, which means it is safe to completely erase
-               -- when pattern matching (otherwise we still have to ensure
-               -- that the value is inspected, to make sure external effects
-               -- happen)
+           (optim : Maybe DConOpt) ->
            Def -- data constructor
     TCon : (tag : Int) -> (arity : Nat) ->
            (parampos : List Nat) -> -- parameters
@@ -109,9 +128,9 @@ Show Def where
   show (PMDef _ args ct rt pats)
       = show args ++ ";\nCompile time tree: " ++ show ct ++
         "\nRun time tree: " ++ show rt
-  show (DCon t a nt)
+  show (DCon t a opt)
       = "DataCon " ++ show t ++ " " ++ show a
-           ++ maybe "" (\n => " (newtype by " ++ show n ++ ")") nt
+           ++ maybe "" (\n => " (" ++ show opt ++ ")") opt
   show (TCon t a ps ds u ms cons det)
       = "TyCon " ++ show t ++ " " ++ show a ++ " params: " ++ show ps ++
         " constructors: " ++ show cons ++

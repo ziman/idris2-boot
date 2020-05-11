@@ -221,20 +221,88 @@ getRelevantArg defs i rel world (NBind fc _ (Pi rig _ val) sc)
 getRelevantArg defs i rel world tm
     = pure (maybe Nothing (\r => Just (world, r)) rel)
 
+hasUnerasedArgs : Defs -> NF [] -> Core Bool
+hasUnerasedArgs defs (NBind fc _ (Pi rig _ val) sc) = do
+  rhs <- sc defs (toClosure defaultOpts [] $ Erased fc False)
+  branchZero (hasUnerasedArgs defs rhs) (pure True) rig
+hasUnerasedArgs _ _ = pure False
+
+isLikeNatS : Defs -> Name -> Nat -> NF [] -> Core (Maybe Nat)
+isLikeNatS defs tfn argNr (NBind fc _ (Pi rig _ piTy) sc) = do
+  rhs <- sc defs (toClosure defaultOpts [] $ Erased fc False)
+  rhsErased <- not <$> hasUnerasedArgs defs rhs
+  branchZero
+    (isLikeNatS defs tfn (S argNr) rhs)
+    (pure $ case piTy of
+      NTCon _ n _ _ _ =>
+        if (n == tfn) && rhsErased
+          then Just argNr
+          else Nothing
+      NApp _ (NRef _ n) _ =>
+        if (n == tfn) && rhsErased
+          then Just argNr
+          else Nothing
+      _ => Nothing
+    )
+    rig
+isLikeNatS _ _ _ _ = pure Nothing
+
 -- If there's one constructor with only one non-erased argument, flag it as
 -- a newtype for optimisation
 export
-findNewtype : {auto c : Ref Ctxt Defs} ->
-              List Constructor -> Core ()
-findNewtype [con]
-    = do defs <- get Ctxt
-         Just arg <- getRelevantArg defs 0 Nothing True !(nf defs [] (type con))
-              | Nothing => pure ()
-         updateDef (name con)
-               (\d => case d of
-                           DCon t a _ => Just (DCon t a (Just arg))
-                           _ => Nothing)
-findNewtype _ = pure ()
+applyDataOpts : {auto c : Ref Ctxt Defs} -> Name -> List Constructor -> Core ()
+applyDataOpts tfn cons = do
+  defs <- get Ctxt
+  cTys <- flip Core.traverse cons $ \con => do
+    tyNF <- nf defs [] (type con)
+    pure (con, tyNF)
+  checkNewType defs cTys
+  checkTagOnly defs cTys
+  checkNatLike defs cTys
+ where
+  setOpt : Constructor -> DConOpt -> Core ()
+  setOpt con opt =
+    updateDef (name con) $ \d => case d of
+      DCon t a _ => Just $ DCon t a (Just opt)
+      _ => Nothing
+
+  checkNewType : Defs -> List (Constructor, NF []) -> Core ()
+  checkNewType defs [(con,cTy)] = do
+    Just (noWorld, fieldNr) <- getRelevantArg defs 0 Nothing True cTy
+      | Nothing => pure ()
+    setOpt con $ NewType noWorld fieldNr
+  checkNewType _ _ = pure ()
+
+  checkTagOnly : Defs -> List (Constructor, NF []) -> Core ()
+  checkTagOnly defs cTys = do
+    us <- Core.traverse (hasUnerasedArgs defs . snd) cTys
+    if foldl (\x, y => x || y) False us
+      then pure ()
+      else Core.traverse_ {b = ()} (\(con, _) => setOpt con TagOnly) cTys
+
+  checkNatLike : Defs -> List (Constructor, NF []) -> Core ()
+  checkNatLike defs [(cx, cxTy), (cy, cyTy)] = do
+    -- either it's Z,S
+    xZ <- not <$> hasUnerasedArgs defs cxTy
+    yS <- isLikeNatS defs tfn Z cyTy
+
+    -- or it's S,Z
+    xS <- isLikeNatS defs tfn Z cxTy
+    yZ <- not <$> hasUnerasedArgs defs cyTy
+
+    -- check which one it is, if at all
+    case (xZ, yS, xS, yZ) of
+      (True, Just fieldNr, _, _) => do
+        setOpt cx NatLikeZ
+        setOpt cy (NatLikeS fieldNr)
+
+      (_, _, Just fieldNr, True) => do
+        setOpt cx (NatLikeS fieldNr)
+        setOpt cy NatLikeZ
+
+      _ => pure ()
+
+  checkNatLike _ _ = pure ()
 
 export
 processData : {vars : _} ->
@@ -337,7 +405,7 @@ processData {vars} eopts nest env fc vis (MkImpData dfc n_in ty_raw opts cons_ra
          -- Skip optimisation if the data type has specified `noNewtype` in its
          -- options list.
          when (not (NoNewtype `elem` opts)) $
-              findNewtype cons
+              applyDataOpts n cons
 
          -- Type is defined mutually with every data type undefined at the
          -- point it was declared, and every data type undefined right now

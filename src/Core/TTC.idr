@@ -792,6 +792,25 @@ TTC TypeFlags where
            pure (MkTypeFlags u e)
 
 export
+TTC DConOpt where
+  toBuf b (NewType noWorld fieldNr)
+     = do tag 0; toBuf b noWorld; toBuf b fieldNr
+  toBuf b TagOnly
+     = do tag 1
+  toBuf b (NatLikeS fieldNr)
+     = do tag 2; toBuf b fieldNr
+  toBuf b NatLikeZ
+     = do tag 3
+
+  fromBuf b
+     = case !getTag of
+            0 => NewType <$> fromBuf b <*> fromBuf b
+            1 => pure TagOnly
+            2 => NatLikeS <$> fromBuf b
+            3 => pure NatLikeZ
+            _ => corrupt "DConOpt"
+
+export
 TTC Def where
   toBuf b None = tag 0
   toBuf b (PMDef pi args ct rt pats)
@@ -802,7 +821,7 @@ TTC Def where
       = do tag 3; toBuf b a; toBuf b cs
   toBuf b (Builtin a)
       = throw (InternalError "Trying to serialise a Builtin")
-  toBuf b (DCon t arity nt) = do tag 4; toBuf b t; toBuf b arity; toBuf b nt
+  toBuf b (DCon t arity opt) = do tag 4; toBuf b t; toBuf b arity; toBuf b opt
   toBuf b (TCon t arity parampos detpos u ms datacons dets)
       = do tag 5; toBuf b t; toBuf b arity; toBuf b parampos
            toBuf b detpos; toBuf b u; toBuf b ms; toBuf b datacons
