@@ -22,7 +22,7 @@ NameTags : Type
 NameTags = NameMap Int
 
 data Args
-    = NewTypeBy Nat Nat
+    = Optimise DConOpt
     | EraseArgs Nat (List Nat)
     | Arity Nat
 
@@ -35,7 +35,7 @@ numArgs defs (Ref _ _ n)
               | Nothing => pure (Arity 0)
          case definition gdef of
            DCon _ arity Nothing => pure (EraseArgs arity (eraseArgs gdef))
-           DCon _ arity (Just (_, pos)) => pure (NewTypeBy arity pos)
+           DCon _ arity (Just opt) => pure (Optimise opt)
            PMDef _ args _ _ _ => pure (Arity (length args))
            ExternDef arity => pure (Arity arity)
            ForeignDef arity _ => pure (Arity arity)
@@ -262,27 +262,44 @@ mutual
              NameTags -> Name -> List (CaseAlt vars) ->
              Core (List (CConAlt vars))
   conCases tags n [] = pure []
-  conCases {vars} tags n (ConCase x tag args sc :: ns)
-      = do defs <- get Ctxt
-           Just gdef <- lookupCtxtExact x (gamma defs)
-                | Nothing => -- primitive type match
-                     do xn <- getFullName x
-                        let tag' = case lookup x tags of
-                                        Just t => t
-                                        _ => tag
-                        pure $ MkConAlt xn tag' args !(toCExpTree tags n sc)
-                                  :: !(conCases tags n ns)
-           case (definition gdef) of
-                DCon _ arity (Just pos) => conCases tags n ns -- skip it
-                _ => do xn <- getFullName x
-                        let (args' ** sub)
-                            = mkDropSubst 0 (eraseArgs gdef) vars args
-                        let tag' = case lookup x tags of
-                                        Just t => t
-                                        _ => tag
-                        pure $ MkConAlt xn tag' args'
-                                    (shrinkCExp sub !(toCExpTree tags n sc))
-                                  :: !(conCases tags n ns)
+  conCases {vars} tags n (ConCase cn tag args rhs :: ns) = do
+    defs <- get Ctxt
+    case !(definition <$> lookupCtxtExact cn (gamma defs)) of
+      -- primitive type match
+      Nothing =>
+          MkConAlt !(getFullName cn)
+            (fromMaybe tag $ lookup cn tags)
+            args
+            !(toCExpTree tags n rhs)
+          :: !(conCases tags n ns)
+
+      -- data constructor with optimisation
+      DCon _ arity (Just opt) => case opt of
+        NewType _ _ => conCases tags n ns  -- skip it
+
+        TagOnly => do
+          alt <- MkConstAlt (I . fromMaybe tag $ lookup cn tags)
+            <$> toCExpTree tags n rhs
+          (alt ::) <$> conCases tags n ns
+
+        NatLikeZ => do
+          alt <- MkConstAlt (BI 0) <$> toCExpTree tags n rhs
+          (alt ::) <$> conCases tags n ns
+
+        NatLikeS fieldNr => do
+          alt <- MkConstAlt  -- TODO: continue here
+
+      -- no optimisation
+      _ => do
+        let (args' ** sub) = mkDropSubst 0 (eraseArgs gdef) vars args
+        pure $
+          MkConAlt
+            !(getFullName x)
+            (fromMaybe tag $ lookup cn tags)
+            args'
+            (shrinkCExp sub !(toCExpTree tags n rhs))
+          :: !(conCases tags n ns)
+
   conCases tags n (_ :: ns) = conCases tags n ns
 
   constCases : {auto c : Ref Ctxt Defs} ->
@@ -295,54 +312,6 @@ mutual
       = pure $ MkConstAlt x !(toCExpTree tags n sc) ::
                     !(constCases tags n ns)
   constCases tags n (_ :: ns) = constCases tags n ns
-
-  -- If there's a case which matches on a 'newtype', return the RHS
-  -- without matching.
-  -- Take some care if the newtype involves a WorldVal - in that case we
-  -- still need to let bind the scrutinee to ensure it's evaluated exactly
-  -- once.
-  getNewType : {auto c : Ref Ctxt Defs} ->
-               FC -> CExp vars ->
-               NameTags -> Name -> List (CaseAlt vars) ->
-               Core (Maybe (CExp vars))
-  getNewType fc scr tags n [] = pure Nothing
-  getNewType fc scr tags n (DefaultCase sc :: ns)
-      = pure $ Nothing
-  getNewType {vars} fc scr tags n (ConCase x tag args sc :: ns)
-      = do defs <- get Ctxt
-           case !(lookupDefExact x (gamma defs)) of
-                -- If the flag is False, we still take the
-                -- default, but need to evaluate the scrutinee of the
-                -- case anyway - if the data structure contains a %World,
-                -- that we've erased, it means it has interacted with the
-                -- outside world, so we need to evaluate to keep the
-                -- side effect.
-                Just (DCon _ arity (Just (noworld, pos))) =>
-                     if noworld -- just substitute the scrutinee into
-                                -- the RHS
-                        then let env : SubstCEnv args vars
-                                     = mkSubst 0 scr pos args in
-                                 pure $ Just (substs env !(toCExpTree tags n sc))
-                        else -- let bind the scrutinee, and substitute the
-                             -- name into the RHS
-                             let env : SubstCEnv args (MN "eff" 0 :: vars)
-                                     = mkSubst 0 (CLocal fc First) pos args in
-                             do sc' <- toCExpTree tags n sc
-                                let scope = thin {outer=args}
-                                                 {inner=vars}
-                                                 (MN "eff" 0) sc'
-                                pure $ Just (CLet fc (MN "eff" 0) False scr
-                                                  (substs env scope))
-                _ => pure Nothing -- there's a normal match to do
-    where
-      mkSubst : Nat -> CExp vs ->
-                Nat -> (args : List Name) -> SubstCEnv args vs
-      mkSubst _ _ _ [] = Nil
-      mkSubst i scr pos (a :: as)
-          = if i == pos
-               then scr :: mkSubst (1 + i) scr pos as
-               else CErased fc :: mkSubst (1 + i) scr pos as
-  getNewType fc scr tags n (_ :: ns) = getNewType fc scr tags n ns
 
   getDef : {auto c : Ref Ctxt Defs} ->
            NameTags -> Name -> List (CaseAlt vars) ->
@@ -369,17 +338,50 @@ mutual
   toCExpTree' : {auto c : Ref Ctxt Defs} ->
                 NameTags -> Name -> CaseTree vars ->
                 Core (CExp vars)
-  toCExpTree' tags n (Case _ x scTy alts@(ConCase _ _ _ _ :: _))
-      = let fc = getLoc scTy in
-            do Nothing <- getNewType fc (CLocal fc x) tags n alts
-                   | Just def => pure def
-               defs <- get Ctxt
-               cases <- conCases tags n alts
-               def <- getDef tags n alts
-               if isNil cases
-                  then pure (fromMaybe (CErased fc) def)
-                  else pure $ natHackTree $
-                            CConCase fc (CLocal fc x) cases def
+
+  toCExpTree' tags n (Case _ sc scTy alts@(ConCase cn tag args rhs :: _)) =
+    defs <- get Ctxt
+    cDef <- lookupDefExact n (gamma defs)
+    case cDef of
+      -- it's a newtype constructor
+      Just (DCon _ arity (Just $ NewType noWorld fieldNr)) =>
+        if noWorld
+          -- and it does not have world in it
+          then let env : SubstCEnv args vars = mkSubst 0 scr pos args
+                in substs env <$> toCExpTree tags n rhs
+
+          -- it has an erased world so we need to compile it specially:
+          -- if the data structure contains a %World that we've erased,
+          -- it means it has interacted with the outside world,
+          -- so we need to evaluate to keep the side effect.
+          --
+          -- let bind the scrutinee, and substitute the name into the RHS
+          else let env : SubstCEnv args (MN "eff" 0 :: vars)
+                    = mkSubst 0 (CLocal fc First) pos args
+                in do
+                  scope <- thin {outer=args} {inner=vars} (MN "eff" 0)
+                    <$> toCExpTree tags n rhs
+                  pure $ CLet fc (MN "eff" 0) False (CLocal fc x) (substs env scope)
+
+      -- not a newtype constructor
+      _ => do
+         def <- getDef tags n alts
+         cases <- conCases tags n alts
+         pure $ if isNil cases
+            then fromMaybe (CErased fc) def
+            else natHackTree $ CConCase fc (CLocal fc sc) cases def
+    where
+      fc : FC
+      fc = getLoc scTy
+
+      mkSubst : Nat -> CExp vs ->
+                Nat -> (args : List Name) -> SubstCEnv args vs
+      mkSubst _ _ _ [] = Nil
+      mkSubst i scr pos (a :: as)
+          = if i == pos
+               then scr :: mkSubst (1 + i) scr pos as
+               else CErased fc :: mkSubst (1 + i) scr pos as
+
   toCExpTree' tags n (Case _ x scTy alts@(DelayCase _ _ _ :: _))
       = throw (InternalError "Unexpected DelayCase")
   toCExpTree' tags n (Case fc x scTy alts@(ConstCase _ _ :: _))
