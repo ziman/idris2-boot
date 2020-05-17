@@ -121,6 +121,7 @@ mutual
     <|> lambdaCase fname indents
     <|> lazy fname indents
     <|> if_ fname indents
+    <|> with_ fname indents
     <|> doBlock fname indents
     <|> do start <- location
            f <- simpleExpr fname indents
@@ -677,6 +678,29 @@ mutual
            tm <- expr pdef fname indents
            end <- location
            pure (PRewrite (MkFC fname start end) rule tm)
+
+  with_ : FileName -> IndentInfo -> Rule PTerm
+  with_ fname indents
+      = do start <- location
+           keyword "with"
+           commit
+           ns <- singleName <|> nameList
+           end <- location
+           rhs <- expr pdef fname indents
+           pure (PWithUnambigNames (MkFC fname start end) ns rhs)
+    where
+      singleName : Rule (List Name)
+      singleName = do
+        n <- name
+        pure [n]
+
+      nameList : Rule (List Name)
+      nameList = do
+        symbol "["
+        commit
+        ns <- sepBy1 (symbol ",") name
+        symbol "]"
+        pure ns
 
   doBlock : FileName -> IndentInfo -> Rule PTerm
   doBlock fname indents

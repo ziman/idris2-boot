@@ -44,6 +44,10 @@ Other improvements:
   such as `r.field1.field2` or `record { field1.field2 = 42 }`.
   For details, see https://idris2.readthedocs.io/en/latest/reference/records.html
 
+* To improve error messages, one can use `with NS.name <term>`
+  or `with [NS.name1, NS.name2, ...] <term>` to disable disambiguation
+  for the given names in `<term>`. Example: `with MyNS.(>>=) do ...`.
+
 Changes since Idris 1
 ---------------------
 
