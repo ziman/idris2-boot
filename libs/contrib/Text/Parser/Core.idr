@@ -174,10 +174,6 @@ export
 fail : String -> Grammar tok c ty
 fail = Fail
 
-export
-fatalError : {c : Bool} -> String -> Grammar tok c ty
-fatalError msg = commitAbsolute *> fail msg
-
 ||| Succeed if the input is empty
 export
 eof : Grammar tok False ()

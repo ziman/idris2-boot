@@ -8,6 +8,10 @@ import public Text.Parser.Core
 import public Text.Quantity
 import public Text.Token
 
+export
+fatalError : {c : Bool} -> String -> Grammar tok c ty
+fatalError msg = commitAbsolute *> fail msg
+
 ||| Parse a terminal based on a kind of token.
 export
 match : (Eq k, TokenKind k) =>
