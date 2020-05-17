@@ -162,8 +162,8 @@ withCommitScope : Grammar tok c a -> Grammar tok c a
 withCommitScope = WithCommitScope
 
 export
-commitScoped : Grammar tok False ()
-commitScoped = Commit Scoped
+commit : Grammar tok False ()
+commit = Commit Scoped
 
 export
 commitAbsolute : Grammar tok False ()
