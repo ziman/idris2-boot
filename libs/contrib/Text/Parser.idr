@@ -262,3 +262,7 @@ between : {c : _} ->
           (p : Grammar tok c a) ->
           Grammar tok True a
 between left right contents = left *> contents <* right
+
+export
+scopedChoice : Foldable t => {c : Bool} -> t (Grammar tok c a) -> Grammar tok c a
+scopedChoice = withCommitScope . choice
